@@ -116,6 +116,11 @@ module.exports = {
     },
 
     // value must be an ArrayBuffer
+    writeSerial: function (device_id, service_uuid, characteristic_uuid, value, success, failure) {
+        cordova.exec(success, failure, 'BLE', 'writeSerial', [device_id, service_uuid, characteristic_uuid, value]);
+    },
+
+    // value must be an ArrayBuffer
     writeCommand: function (device_id, service_uuid, characteristic_uuid, value, success, failure) {
         console.log("WARNING: writeCommand is deprecated, use writeWithoutResponse");
         cordova.exec(success, failure, 'BLE', 'writeWithoutResponse', [device_id, service_uuid, characteristic_uuid, value]);
@@ -135,6 +140,16 @@ module.exports = {
     // success callback is called when the descriptor 0x2902 is written
     stopNotification: function (device_id, service_uuid, characteristic_uuid, success, failure) {
         cordova.exec(success, failure, 'BLE', 'stopNotification', [device_id, service_uuid, characteristic_uuid]);
+    },
+
+    // success callback is called on delimiter received
+    startSerial: function (device_id, service_uuid, characteristic_uuid, delimiter, success, failure) {
+        cordova.exec(success, failure, 'BLE', 'startSerial', [device_id, service_uuid, characteristic_uuid, delimiter]);
+    },
+
+    // success callback is called when the descriptor 0x2902 is written
+    stopSerial: function (device_id, service_uuid, characteristic_uuid, success, failure) {
+        cordova.exec(success, failure, 'BLE', 'stopSerial', [device_id, service_uuid, characteristic_uuid]);
     },
 
     isConnected: function (device_id, success, failure) {

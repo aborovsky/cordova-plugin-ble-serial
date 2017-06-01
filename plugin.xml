@@ -2,7 +2,7 @@
 <plugin
     xmlns="http://www.phonegap.com/ns/plugins/1.0"
     xmlns:android="http://schemas.android.com/apk/res/android"
-    id="cordova-plugin-ble-central"
+    id="cordova-plugin-ble-serial"
     version="1.1.4">
 
     <name>BLE</name>
@@ -10,8 +10,7 @@
     <license>Apache 2.0</license>
     <keywords>bluetooth, BLE, bluetooth low energy, bluetooth smart</keywords>
 
-    <repo>https://github.com/don/cordova-plugin-ble-central.git</repo>
-    <issue>https://github.com/don/cordova-plugin-ble-central/issues</issue>
+    <repo>https://github.com/davemorrissey/cordova-plugin-ble-central.git</repo>
 
     <dependency id="cordova-plugin-compat" version="^1.0.0" />
 
@@ -36,6 +35,8 @@
         <header-file src="src/ios/BLECommandContext.h" target-dir="BLECentralPlugin" />
         <source-file src="src/ios/BLECommandContext.m" target-dir="BLECentralPlugin" />
 
+        <header-file src="src/ios/BLESerialConfig.h" target-dir="BLECentralPlugin" />
+        <source-file src="src/ios/BLESerialConfig.m" target-dir="BLECentralPlugin" />
         <!-- frameworks -->
         <framework src="CoreBluetooth.framework" />
 

@@ -22,6 +22,7 @@
 #import <Cordova/CDV.h>
 #import <CoreBluetooth/CoreBluetooth.h>
 #import "BLECommandContext.h"
+#import "BLESerialConfig.h"
 #import "CBPeripheral+Extensions.h"
 
 @interface BLECentralPlugin : CDVPlugin <CBCentralManagerDelegate, CBPeripheralDelegate> {
@@ -32,6 +33,8 @@
     NSMutableDictionary *writeCallbacks;
     NSMutableDictionary *notificationCallbacks;
     NSMutableDictionary *stopNotificationCallbacks;
+    NSMutableDictionary *serialConfigs;
+    NSMutableDictionary *stopSerialCallbacks;
     NSMutableDictionary *connectCallbackLatches;
     NSMutableDictionary *readRSSICallbacks;
 }
@@ -50,9 +53,13 @@
 - (void)read:(CDVInvokedUrlCommand *)command;
 - (void)write:(CDVInvokedUrlCommand *)command;
 - (void)writeWithoutResponse:(CDVInvokedUrlCommand *)command;
+- (void)writeSerial:(CDVInvokedUrlCommand *)command;
 
 - (void)startNotification:(CDVInvokedUrlCommand *)command;
 - (void)stopNotification:(CDVInvokedUrlCommand *)command;
+
+- (void)startSerial:(CDVInvokedUrlCommand *)command;
+- (void)stopSerial:(CDVInvokedUrlCommand *)command;
 
 - (void)isEnabled:(CDVInvokedUrlCommand *)command;
 - (void)isConnected:(CDVInvokedUrlCommand *)command;

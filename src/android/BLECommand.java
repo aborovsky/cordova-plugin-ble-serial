@@ -14,12 +14,16 @@ class BLECommand {
     public static int REGISTER_NOTIFY = 10001;
     public static int REMOVE_NOTIFY = 10002;
     public static int READ_RSSI = 10003;
+    public static int WRITE_SERIAL = 10004;
+    public static int REGISTER_SERIAL = 10005;
+    public static int REMOVE_SERIAL = 10006;
     // BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
     // BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
 
     private CallbackContext callbackContext;
     private UUID serviceUUID;
     private UUID characteristicUUID;
+    private String delimiter;
     private byte[] data;
     private int type;
 
@@ -36,6 +40,14 @@ class BLECommand {
         this.serviceUUID = serviceUUID;
         this.characteristicUUID = characteristicUUID;
         this.data = data;
+        this.type = type;
+    }
+
+    public BLECommand(CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID, String delimiter, int type) {
+        this.callbackContext = callbackContext;
+        this.serviceUUID = serviceUUID;
+        this.characteristicUUID = characteristicUUID;
+        this.delimiter = delimiter;
         this.type = type;
     }
 
@@ -57,5 +69,9 @@ class BLECommand {
 
     public byte[] getData() {
         return data;
+    }
+
+    public String getDelimiter() {
+        return delimiter;
     }
 }

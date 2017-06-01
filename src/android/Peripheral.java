@@ -26,6 +26,9 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.charset.Charset;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
@@ -45,6 +48,7 @@ public class Peripheral extends BluetoothGattCallback {
     private boolean connected = false;
     private boolean connecting = false;
     private ConcurrentLinkedQueue<BLECommand> commandQueue = new ConcurrentLinkedQueue<BLECommand>();
+    private BLEWriteSerialCommand writeSerialCommand;
     private boolean bleProcessing;
 
     BluetoothGatt gatt;
@@ -54,6 +58,62 @@ public class Peripheral extends BluetoothGattCallback {
     private CallbackContext writeCallback;
 
     private Map<String, CallbackContext> notificationCallbacks = new HashMap<String, CallbackContext>();
+    private Map<String, BLESerialCallback> serialCallbacks = new HashMap<String, BLESerialCallback>();
+
+    private static class BLEWriteSerialCommand {
+        private BLECommand command;
+        private ConcurrentLinkedQueue<byte[]> packets = new ConcurrentLinkedQueue<byte[]>();
+    }
+
+    private static class BLESerialCallback {
+        private ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        private CallbackContext callbackContext;
+        private byte delimiter;
+        private long sequence = 0;
+
+        private BLESerialCallback(CallbackContext callbackContext, String delimiter) {
+            this.callbackContext = callbackContext;
+            this.delimiter = delimiter.getBytes(Charset.forName("US-ASCII"))[0];
+        }
+
+        private void dataReceived(byte[] data) {
+            try {
+                buffer.write(data);
+                if (buffer.size() > 512) {
+                    // no delimiters have been sent
+                    buffer.reset();
+                } else {
+                    byte[] bufferBytes = buffer.toByteArray();
+                    int lastDelimiter = -1;
+                    for (int i = 0; i < bufferBytes.length; i++) {
+                        byte bufferByte = bufferBytes[i];
+                        if (bufferByte == delimiter) {
+                            byte[] message = Arrays.copyOfRange(bufferBytes, lastDelimiter + 1, i);
+                            lastDelimiter = i;
+
+                            if (message.length > 0) {
+                                sequence++;
+                                PluginResult result = new PluginResult(PluginResult.Status.OK, message);
+                                result.setKeepCallback(true);
+                                callbackContext.sendPluginResult(result);
+                            }
+                        }
+                    }
+
+                    if (lastDelimiter > -1) {
+                        buffer.reset();
+                        if (lastDelimiter < bufferBytes.length) {
+                            buffer.write(Arrays.copyOfRange(bufferBytes, lastDelimiter + 1, bufferBytes.length));
+                        }
+                    }
+                }
+
+            } catch (IOException e) {
+                LOG.e(TAG, "Unexpected IOException writing data to buffer", e);
+            }
+
+        }
+    }
 
     public Peripheral(BluetoothDevice device, int advertisingRSSI, byte[] scanRecord) {
 
@@ -246,6 +306,12 @@ public class Peripheral extends BluetoothGattCallback {
             result.setKeepCallback(true);
             callback.sendPluginResult(result);
         }
+
+        BLESerialCallback serialCallback = serialCallbacks.get(generateHashKey(characteristic));
+
+        if (serialCallback != null) {
+            serialCallback.dataReceived(characteristic.getValue());
+        }
     }
 
     @Override
@@ -276,8 +342,17 @@ public class Peripheral extends BluetoothGattCallback {
         if (writeCallback != null) {
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                writeCallback.success();
+                if (writeSerialCommand == null) {
+                    LOG.d(TAG, "onCharacteristicWrite success, no packets");
+                    writeCallback.success();
+                } else {
+                    try {
+                        Thread.sleep(200);
+                    } catch (Exception e) { }
+                    LOG.d(TAG, "onCharacteristicWrite success, more packets");
+                }
             } else {
+                writeSerialCommand = null;
                 writeCallback.error(status);
             }
 
@@ -321,8 +396,12 @@ public class Peripheral extends BluetoothGattCallback {
         advertisingRSSI = rssi;
     }
 
+    private void registerNotifyCallback(CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID, boolean serial) {
+        registerNotifyCallback(callbackContext, serviceUUID, characteristicUUID, serial, null);
+    }
+
     // This seems way too complicated
-    private void registerNotifyCallback(CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID) {
+    private void registerNotifyCallback(CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID, boolean serial, String delimiter) {
 
         boolean success = false;
 
@@ -337,7 +416,11 @@ public class Peripheral extends BluetoothGattCallback {
 
         if (characteristic != null) {
 
-            notificationCallbacks.put(key, callbackContext);
+            if (serial) {
+                serialCallbacks.put(key, new BLESerialCallback(callbackContext, delimiter));
+            } else {
+                notificationCallbacks.put(key, callbackContext);
+            }
 
             if (gatt.setCharacteristicNotification(characteristic, true)) {
 
@@ -377,7 +460,7 @@ public class Peripheral extends BluetoothGattCallback {
         }
     }
 
-    private void removeNotifyCallback(CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID) {
+    private void removeNotifyCallback(CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID, boolean serial) {
 
         if (gatt == null) {
             callbackContext.error("BluetoothGatt is null");
@@ -390,9 +473,15 @@ public class Peripheral extends BluetoothGattCallback {
 
         if (characteristic != null) {
 
-            notificationCallbacks.remove(key);
+            if (serial) {
+                serialCallbacks.remove(key);
+            } else {
+                notificationCallbacks.remove(key);
+            }
 
-            if (gatt.setCharacteristicNotification(characteristic, false)) {
+            if (serialCallbacks.containsKey(key) || notificationCallbacks.containsKey(key)) {
+                callbackContext.success();
+            } else if (gatt.setCharacteristicNotification(characteristic, false)) {
                 BluetoothGattDescriptor descriptor = characteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIGURATION_UUID);
                 if (descriptor != null) {
                     descriptor.setValue(BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE);
@@ -400,7 +489,7 @@ public class Peripheral extends BluetoothGattCallback {
                 }
                 callbackContext.success();
             } else {
-                // TODO we can probably ignore and return success anyway since we removed the notification callback
+                // TODO we can probably ignore and return success anyway since we removed the notification callbackContext
                 callbackContext.error("Failed to stop notification for " + characteristicUUID);
             }
 
@@ -522,13 +611,13 @@ public class Peripheral extends BluetoothGattCallback {
         return characteristic;
     }
 
-    private void writeCharacteristic(CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID, byte[] data, int writeType) {
+    private boolean writeCharacteristic(CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID, byte[] data, int writeType) {
 
         boolean success = false;
 
         if (gatt == null) {
             callbackContext.error("BluetoothGatt is null");
-            return;
+            return false;
         }
 
         BluetoothGattService service = gatt.getService(serviceUUID);
@@ -544,6 +633,7 @@ public class Peripheral extends BluetoothGattCallback {
             if (gatt.writeCharacteristic(characteristic)) {
                 success = true;
             } else {
+                writeSerialCommand = null;
                 writeCallback = null;
                 callbackContext.error("Write failed");
             }
@@ -552,6 +642,7 @@ public class Peripheral extends BluetoothGattCallback {
         if (!success) {
             commandCompleted();
         }
+        return success;
 
     }
 
@@ -602,6 +693,16 @@ public class Peripheral extends BluetoothGattCallback {
         queueCommand(command);
     }
 
+    public void queueRegisterSerialCallback(CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID, String delimiter) {
+        BLECommand command = new BLECommand(callbackContext, serviceUUID, characteristicUUID, delimiter, BLECommand.REGISTER_SERIAL);
+        queueCommand(command);
+    }
+
+    public void queueRemoveSerialCallback(CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID) {
+        BLECommand command = new BLECommand(callbackContext, serviceUUID, characteristicUUID, BLECommand.REMOVE_SERIAL);
+        queueCommand(command);
+    }
+
 
     public void queueReadRSSI(CallbackContext callbackContext) {
         BLECommand command = new BLECommand(callbackContext, null, null, BLECommand.READ_RSSI);
@@ -635,6 +736,8 @@ public class Peripheral extends BluetoothGattCallback {
 
         if (bleProcessing) { return; }
 
+        if (writeNextPacket()) { return; }
+
         BLECommand command = commandQueue.poll();
         if (command != null) {
             if (command.getType() == BLECommand.READ) {
@@ -646,17 +749,38 @@ public class Peripheral extends BluetoothGattCallback {
                 bleProcessing = true;
                 writeCharacteristic(command.getCallbackContext(), command.getServiceUUID(), command.getCharacteristicUUID(), command.getData(), command.getType());
             } else if (command.getType() == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) {
-                LOG.d(TAG,"Write No Response " + command.getCharacteristicUUID());
+                LOG.d(TAG, "Write No Response " + command.getCharacteristicUUID());
                 bleProcessing = true;
                 writeCharacteristic(command.getCallbackContext(), command.getServiceUUID(), command.getCharacteristicUUID(), command.getData(), command.getType());
+            } else if (command.getType() == BLECommand.WRITE_SERIAL) {
+                LOG.d(TAG, "Write Serial " + command.getCharacteristicUUID());
+                bleProcessing = true;
+                ConcurrentLinkedQueue<byte[]> packets = new ConcurrentLinkedQueue<byte[]>();
+                byte[] data = command.getData();
+                String string = new String(data, Charset.forName("US-ASCII"));
+                for (int i = 0; i < data.length; i += 20) {
+                    packets.add(Arrays.copyOfRange(data, i, Math.min(i + 20, data.length)));
+                }
+                writeSerialCommand = new BLEWriteSerialCommand();
+                writeSerialCommand.command = command;
+                writeSerialCommand.packets = packets;
+                writeNextPacket();
             } else if (command.getType() == BLECommand.REGISTER_NOTIFY) {
                 LOG.d(TAG,"Register Notify " + command.getCharacteristicUUID());
                 bleProcessing = true;
-                registerNotifyCallback(command.getCallbackContext(), command.getServiceUUID(), command.getCharacteristicUUID());
+                registerNotifyCallback(command.getCallbackContext(), command.getServiceUUID(), command.getCharacteristicUUID(), false);
             } else if (command.getType() == BLECommand.REMOVE_NOTIFY) {
                 LOG.d(TAG,"Remove Notify " + command.getCharacteristicUUID());
                 bleProcessing = true;
-                removeNotifyCallback(command.getCallbackContext(), command.getServiceUUID(), command.getCharacteristicUUID());
+                removeNotifyCallback(command.getCallbackContext(), command.getServiceUUID(), command.getCharacteristicUUID(), false);
+            } else if (command.getType() == BLECommand.REGISTER_SERIAL) {
+                LOG.d(TAG,"Register Serial " + command.getCharacteristicUUID());
+                bleProcessing = true;
+                registerNotifyCallback(command.getCallbackContext(), command.getServiceUUID(), command.getCharacteristicUUID(), true, command.getDelimiter());
+            } else if (command.getType() == BLECommand.REMOVE_SERIAL) {
+                LOG.d(TAG,"Remove Serial " + command.getCharacteristicUUID());
+                bleProcessing = true;
+                removeNotifyCallback(command.getCallbackContext(), command.getServiceUUID(), command.getCharacteristicUUID(), true);
             } else if (command.getType() == BLECommand.READ_RSSI) {
                 LOG.d(TAG,"Read RSSI");
                 bleProcessing = true;
@@ -669,6 +793,25 @@ public class Peripheral extends BluetoothGattCallback {
             LOG.d(TAG, "Command Queue is empty.");
         }
 
+    }
+
+    private boolean writeNextPacket() {
+        if (writeSerialCommand != null) {
+            BLECommand command = writeSerialCommand.command;
+            byte[] data = writeSerialCommand.packets.poll();
+            if (data != null) {
+                // LOG.d(TAG, "Sending packet, " + writeSerialCommand.packets.size() + " packets remaining");
+                // LOG.d(TAG, "Packet string:" + new String(data, Charset.forName("US-ASCII")));
+                if (writeSerialCommand.packets.isEmpty()) {
+                    writeSerialCommand = null;
+                }
+                if (!writeCharacteristic(command.getCallbackContext(), command.getServiceUUID(), command.getCharacteristicUUID(), data, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)) {
+                    writeSerialCommand = null;
+                }
+                return true;
+            }
+        }
+        return false;
     }
 
     private String generateHashKey(BluetoothGattCharacteristic characteristic) {

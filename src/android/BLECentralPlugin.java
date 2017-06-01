@@ -56,11 +56,15 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
     private static final String READ = "read";
     private static final String WRITE = "write";
     private static final String WRITE_WITHOUT_RESPONSE = "writeWithoutResponse";
+    private static final String WRITE_SERIAL = "writeSerial";
 
     private static final String READ_RSSI = "readRSSI";
 
     private static final String START_NOTIFICATION = "startNotification"; // register for characteristic notification
     private static final String STOP_NOTIFICATION = "stopNotification"; // remove characteristic notification
+
+    private static final String START_SERIAL = "startSerial"; // register for characteristic serial
+    private static final String STOP_SERIAL = "stopSerial"; // remove characteristic serial
 
     private static final String IS_ENABLED = "isEnabled";
     private static final String IS_CONNECTED  = "isConnected";
@@ -119,13 +123,13 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
         if (bluetoothAdapter == null) {
             Activity activity = cordova.getActivity();
             boolean hardwareSupportsBLE = activity.getApplicationContext()
-                                            .getPackageManager()
-                                            .hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE) &&
-                                            Build.VERSION.SDK_INT >= 18;
+                    .getPackageManager()
+                    .hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE) &&
+                    Build.VERSION.SDK_INT >= 18;
             if (!hardwareSupportsBLE) {
-              LOG.w(TAG, "This hardware does not support Bluetooth Low Energy.");
-              callbackContext.error("This hardware does not support Bluetooth Low Energy.");
-              return false;
+                LOG.w(TAG, "This hardware does not support Bluetooth Low Energy.");
+                callbackContext.error("This hardware does not support Bluetooth Low Energy.");
+                return false;
             }
             BluetoothManager bluetoothManager = (BluetoothManager) activity.getSystemService(Context.BLUETOOTH_SERVICE);
             bluetoothAdapter = bluetoothManager.getAdapter();
@@ -195,6 +199,15 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
             int type = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE;
             write(callbackContext, macAddress, serviceUUID, characteristicUUID, data, type);
 
+        } else if (action.equals(WRITE_SERIAL)) {
+
+            String macAddress = args.getString(0);
+            UUID serviceUUID = uuidFromString(args.getString(1));
+            UUID characteristicUUID = uuidFromString(args.getString(2));
+            byte[] data = args.getArrayBuffer(3);
+            int type = BLECommand.WRITE_SERIAL;
+            write(callbackContext, macAddress, serviceUUID, characteristicUUID, data, type);
+
         } else if (action.equals(START_NOTIFICATION)) {
 
             String macAddress = args.getString(0);
@@ -208,6 +221,28 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
             UUID serviceUUID = uuidFromString(args.getString(1));
             UUID characteristicUUID = uuidFromString(args.getString(2));
             removeNotifyCallback(callbackContext, macAddress, serviceUUID, characteristicUUID);
+
+        } else if (action.equals(START_SERIAL)) {
+
+            String macAddress = args.getString(0);
+            UUID serviceUUID = uuidFromString(args.getString(1));
+            UUID characteristicUUID = uuidFromString(args.getString(2));
+            String delimiter = args.getString(3);
+
+            if (delimiter == null) {
+                callbackContext.error("Delimiter was null");
+            } else if (delimiter.length() != 1) {
+                callbackContext.error("Delimiter must be a single character");
+            } else {
+                registerSerialCallback(callbackContext, macAddress, serviceUUID, characteristicUUID, delimiter);
+            }
+
+        } else if (action.equals(STOP_SERIAL)) {
+
+            String macAddress = args.getString(0);
+            UUID serviceUUID = uuidFromString(args.getString(1));
+            UUID characteristicUUID = uuidFromString(args.getString(2));
+            removeSerialCallback(callbackContext, macAddress, serviceUUID, characteristicUUID);
 
         } else if (action.equals(IS_ENABLED)) {
 
@@ -443,6 +478,47 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
             }
 
             peripheral.queueRemoveNotifyCallback(callbackContext, serviceUUID, characteristicUUID);
+
+        } else {
+
+            callbackContext.error("Peripheral " + macAddress + " not found");
+
+        }
+
+    }
+
+    private void registerSerialCallback(CallbackContext callbackContext, String macAddress, UUID serviceUUID, UUID characteristicUUID, String delimiter) {
+
+        Peripheral peripheral = peripherals.get(macAddress);
+        if (peripheral != null) {
+
+            if (!peripheral.isConnected()) {
+                callbackContext.error("Peripheral " + macAddress + " is not connected.");
+                return;
+            }
+
+            //peripheral.setOnDataCallback(serviceUUID, characteristicUUID, callbackContext);
+            peripheral.queueRegisterSerialCallback(callbackContext, serviceUUID, characteristicUUID, delimiter);
+
+        } else {
+
+            callbackContext.error("Peripheral " + macAddress + " not found");
+
+        }
+
+    }
+
+    private void removeSerialCallback(CallbackContext callbackContext, String macAddress, UUID serviceUUID, UUID characteristicUUID) {
+
+        Peripheral peripheral = peripherals.get(macAddress);
+        if (peripheral != null) {
+
+            if (!peripheral.isConnected()) {
+                callbackContext.error("Peripheral " + macAddress + " is not connected.");
+                return;
+            }
+
+            peripheral.queueRemoveSerialCallback(callbackContext, serviceUUID, characteristicUUID);
 
         } else {
 

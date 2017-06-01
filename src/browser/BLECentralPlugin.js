@@ -43,11 +43,23 @@ module.exports = {
         notSupported();
         if (failure) failure();
     },
+    writeSerial: function(device_id, service_uuid, characteristic_uuid, data, success, failure) {
+        notSupported();
+        if (failure) failure();
+    },
     startNotification: function(device_id, service_uuid, characteristic_uuid, success, failure) {
         notSupported();
         if (failure) failure();
     },
     stopNotifcation: function(device_id, service_uuid, characteristic_uuid, success, failure) {
+        notSupported();
+        if (failure) failure();
+    },
+    startSerial: function(device_id, service_uuid, characteristic_uuid, delimiter, success, failure) {
+        notSupported();
+        if (failure) failure();
+    },
+    stopSerial: function(device_id, service_uuid, characteristic_uuid, success, failure) {
         notSupported();
         if (failure) failure();
     },

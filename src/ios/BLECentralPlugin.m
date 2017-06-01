@@ -47,6 +47,8 @@
     writeCallbacks = [NSMutableDictionary new];
     notificationCallbacks = [NSMutableDictionary new];
     stopNotificationCallbacks = [NSMutableDictionary new];
+    serialConfigs = [NSMutableDictionary new];
+    stopSerialCallbacks = [NSMutableDictionary new];
     bluetoothStates = [NSDictionary dictionaryWithObjectsAndKeys:
                        @"unknown", @(CBCentralManagerStateUnknown),
                        @"resetting", @(CBCentralManagerStateResetting),
@@ -161,8 +163,38 @@
             CBPeripheral *peripheral = [context peripheral];
             CBCharacteristic *characteristic = [context characteristic];
 
-            // TODO need to check the max length
             [peripheral writeValue:message forCharacteristic:characteristic type:CBCharacteristicWriteWithoutResponse];
+
+            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
+        } else {
+            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"message was null"];
+        }
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+    }
+}
+
+// writeSerial: function (device_id, service_uuid, characteristic_uuid, value, success, failure) {
+- (void)writeSerial:(CDVInvokedUrlCommand*)command {
+    NSLog(@"writeSerial");
+
+    BLECommandContext *context = [self getData:command prop:CBCharacteristicPropertyWriteWithoutResponse];
+    NSData *message = [command.arguments objectAtIndex:3]; // This is binary
+
+    if (context) {
+        CDVPluginResult *pluginResult = nil;
+        if (message != nil) {
+            CBPeripheral *peripheral = [context peripheral];
+            CBCharacteristic *characteristic = [context characteristic];
+
+            for (int i = 0; i < message.length; i+= 20) {
+                NSData *packet = [message subdataWithRange:NSMakeRange(i, MIN(20, message.length - i))];
+
+                NSString *packetString = [[NSString alloc] initWithData:packet encoding:NSASCIIStringEncoding];
+                NSLog(@"Packet:%@", packetString);
+
+                [peripheral writeValue:packet forCharacteristic:characteristic type:CBCharacteristicWriteWithoutResponse];
+                [NSThread sleepForTimeInterval:0.2f];
+            }
 
             pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
         } else {
@@ -207,6 +239,66 @@
         NSString *callback = [command.callbackId copy];
         [stopNotificationCallbacks setObject: callback forKey: key];
 
+        // TODO this will stop serial on the same characteristic
+        [peripheral setNotifyValue:NO forCharacteristic:characteristic];
+        // callback sent from peripheral:didUpdateNotificationStateForCharacteristic:error:
+
+    }
+
+}
+
+// success callback is called when a delimiter is received
+// notify: function (device_id, service_uuid, characteristic_uuid, delimiter, success, failure) {
+- (void)startSerial:(CDVInvokedUrlCommand*)command {
+    NSLog(@"registering for serial");
+
+    BLECommandContext *context = [self getData:command prop:CBCharacteristicPropertyNotify]; // TODO name this better
+    NSString *delimiter = [command.arguments objectAtIndex:3];
+
+    if (delimiter != nil && delimiter.length == 1) {
+
+        if (context) {
+            CBPeripheral *peripheral = [context peripheral];
+            CBCharacteristic *characteristic = [context characteristic];
+
+            NSString *key = [self keyForPeripheral: peripheral andCharacteristic:characteristic];
+            NSString *callback = [command.callbackId copy];
+
+            BLESerialConfig *config = [BLESerialConfig new];
+            [config setCallback:callback];
+            [config setDelimiter:delimiter];
+            [config setBuffer:[NSMutableData alloc]];
+
+            [serialConfigs setObject: config forKey: key];
+
+            [peripheral setNotifyValue:YES forCharacteristic:characteristic];
+        }
+    } else if (delimiter.length != 1) {
+        // TODO support for multi byte delimiter
+        CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"delimiter must be a single character"];
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+    } else {
+        CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"delimiter was null"];
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+    }
+
+}
+
+// stopSerial: function (device_id, service_uuid, characteristic_uuid, success, failure) {
+- (void)stopSerial:(CDVInvokedUrlCommand*)command {
+    NSLog(@"stop serial");
+
+    BLECommandContext *context = [self getData:command prop:CBCharacteristicPropertyNotify];
+
+    if (context) {
+        CBPeripheral *peripheral = [context peripheral];
+        CBCharacteristic *characteristic = [context characteristic];
+
+        NSString *key = [self keyForPeripheral: peripheral andCharacteristic:characteristic];
+        NSString *callback = [command.callbackId copy];
+        [stopSerialCallbacks setObject: callback forKey: key];
+
+        // TODO this will stop notifications on the same characteristic
         [peripheral setNotifyValue:NO forCharacteristic:characteristic];
         // callback sent from peripheral:didUpdateNotificationStateForCharacteristic:error:
 
@@ -527,10 +619,15 @@
 }
 
 - (void)peripheral:(CBPeripheral *)peripheral didUpdateValueForCharacteristic:(CBCharacteristic *)characteristic error:(NSError *)error {
+
     NSLog(@"didUpdateValueForCharacteristic");
 
     NSString *key = [self keyForPeripheral: peripheral andCharacteristic:characteristic];
     NSString *notifyCallbackId = [notificationCallbacks objectForKey:key];
+
+    NSString *value = [[NSString alloc] initWithData:characteristic.value encoding:NSASCIIStringEncoding];
+
+    NSLog(@"Value: %@", value);
 
     if (notifyCallbackId) {
         NSData *data = characteristic.value; // send RAW data to Javascript
@@ -552,6 +649,49 @@
 
         [readCallbacks removeObjectForKey:key];
     }
+
+    BLESerialConfig *serialConfig = [serialConfigs objectForKey:key];
+
+    if (serialConfig) {
+        NSData *data = characteristic.value;
+        NSMutableData *buffer = [serialConfig buffer];
+        [buffer appendData:data];
+
+        if ([buffer length] > 512) {
+
+            // no delimiters have been sent
+            NSLog(@"No delimiter after 512 bytes - message dropped");
+            [buffer setLength: 0];
+
+        } else {
+
+            // NSString *string = [[NSString alloc] initWithData:buffer encoding:NSASCIIStringEncoding];
+            // NSLog(@"Current string:%@", string);
+
+            NSData* delimiter = [serialConfig.delimiter dataUsingEncoding:NSASCIIStringEncoding];
+            while (true) {
+                NSRange range = [buffer rangeOfData: delimiter options:0 range:NSMakeRange(0, [buffer length])];
+                if (range.location == NSNotFound) {
+                    break;
+                } else if (range.location == 0) {
+                    [buffer replaceBytesInRange:NSMakeRange(0, 1) withBytes:NULL length:0];
+                } else {
+
+                    NSData *message = [buffer subdataWithRange:NSMakeRange(0, range.location)];
+                    // NSString *messageString = [[NSString alloc] initWithData:message encoding:NSASCIIStringEncoding];
+                    // NSLog(@"Message string: %@", messageString);
+
+                    CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArrayBuffer:message];
+                    [pluginResult setKeepCallbackAsBool:TRUE];
+                    [self.commandDelegate sendPluginResult:pluginResult callbackId:serialConfig.callback];
+
+                    [buffer replaceBytesInRange:NSMakeRange(0, range.location + 1) withBytes:NULL length:0];
+                }
+            }
+
+        }
+
+    }
 }
 
 - (void)peripheral:(CBPeripheral *)peripheral didUpdateNotificationStateForCharacteristic:(CBCharacteristic *)characteristic error:(NSError *)error {
@@ -562,8 +702,8 @@
 
     CDVPluginResult *pluginResult = nil;
 
-    // we always call the stopNotificationCallbackId if we have a callback
-    // we only call the notificationCallbackId on errors and if there is no stopNotificationCallbackId
+    // we always call the stopNotificationCallbackId/stopSerialCallbackId if we have a callback
+    // we only call the notificationCallbackId/serialCallbackId on errors and if there is no stopNotificationCallbackId/stopSerialCallbackId
 
     if (stopNotificationCallbackId) {
 
@@ -582,6 +722,32 @@
         NSLog(@"%@", error);
         pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:[error localizedDescription]];
         [self.commandDelegate sendPluginResult:pluginResult callbackId:notificationCallbackId];
+    }
+
+    BLESerialConfig *serialConfig = [serialConfigs objectForKey:key];
+    NSString *stopSerialCallbackId = [stopSerialCallbacks objectForKey:key];
+
+    CDVPluginResult *serialPluginResult = nil;
+
+    if (stopSerialCallbackId) {
+
+        if (error) {
+            NSLog(@"%@", error);
+            serialPluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:[error localizedDescription]];
+        } else {
+            serialPluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
+        }
+        [self.commandDelegate sendPluginResult:serialPluginResult callbackId:stopSerialCallbackId];
+        [stopSerialCallbacks removeObjectForKey:key];
+        [serialConfigs removeObjectForKey:key];
+
+    } else if (serialConfig && error) {
+
+        NSString *serialCallbackId = serialConfig.callback;
+
+        NSLog(@"%@", error);
+        serialPluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:[error localizedDescription]];
+        [self.commandDelegate sendPluginResult:serialPluginResult callbackId:serialCallbackId];
     }
 
 }

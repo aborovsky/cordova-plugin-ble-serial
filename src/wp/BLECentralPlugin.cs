@@ -78,11 +78,23 @@ public class BLECentralPlugin : BaseCommand
     {
       notImplemented();
     }
+    public void writeSerial(string args)
+    {
+      notImplemented();
+    }
     public void startNotification(string args)
     {
       notImplemented();
     }
     public void stopNotification(string args)
+    {
+      notImplemented();
+    }
+    public void startSerial(string args)
+    {
+      notImplemented();
+    }
+    public void stopSerial(string args)
     {
       notImplemented();
     }
