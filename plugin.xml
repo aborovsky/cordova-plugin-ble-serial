@@ -10,7 +10,7 @@
     <license>Apache 2.0</license>
     <keywords>bluetooth, BLE, bluetooth low energy, bluetooth smart</keywords>
 
-    <repo>https://github.com/davemorrissey/cordova-plugin-ble-central.git</repo>
+    <repo>https://github.com/davemorrissey/cordova-plugin-ble-serial.git</repo>
 
     <dependency id="cordova-plugin-compat" version="^1.0.0" />
 
