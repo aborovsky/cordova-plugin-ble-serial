@@ -90,9 +90,8 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
     // scan options
     boolean reportDuplicates = false;
 
-    // Android 23 requires new permissions for BluetoothLeScanner.startScan()
-    private static final String ACCESS_COARSE_LOCATION = Manifest.permission.ACCESS_COARSE_LOCATION;
-    private static final int REQUEST_ACCESS_COARSE_LOCATION = 2;
+    // Android 29 requires new permissions for BluetoothLeScanner.startScan()
+    private static final int REQUEST_ACCESS_CODE = 2;
     private static final int PERMISSION_DENIED_ERROR = 20;
     private CallbackContext permissionCallback;
     private UUID[] serviceUUIDs;
@@ -530,12 +529,15 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
 
     private void findLowEnergyDevices(CallbackContext callbackContext, UUID[] serviceUUIDs, int scanSeconds) {
 
-        if(!PermissionHelper.hasPermission(this, ACCESS_COARSE_LOCATION)) {
+        if(
+            !PermissionHelper.hasPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ||
+            !PermissionHelper.hasPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
+        ) {
             // save info so we can call this method again after permissions are granted
             permissionCallback = callbackContext;
             this.serviceUUIDs = serviceUUIDs;
             this.scanSeconds = scanSeconds;
-            PermissionHelper.requestPermission(this, REQUEST_ACCESS_COARSE_LOCATION, ACCESS_COARSE_LOCATION);
+            PermissionHelper.requestPermissions(this, REQUEST_ACCESS_CODE, new String[] { Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION });
             return;
         }
 
@@ -657,7 +659,7 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
         }
 
         switch(requestCode) {
-            case REQUEST_ACCESS_COARSE_LOCATION:
+            case REQUEST_ACCESS_CODE:
                 LOG.d(TAG, "User granted Coarse Location Access");
                 findLowEnergyDevices(permissionCallback, serviceUUIDs, scanSeconds);
                 this.permissionCallback = null;
